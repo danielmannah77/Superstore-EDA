@@ -1,0 +1,137 @@
+In this project, I used SQL on Bigquery to analyse a SuperStore sales dataset from Kaggle (you can find the dataset at: https://www.kaggle.com/datasets/blurredmachine/superstore-time-series-dataset)
+My aim was to continue to apply the SQL techniques for data analysis that i have learned.
+
+Firstly, I wanted to ensure that the dataset did not include duplictates that may skew the analysis. I used the following code to do so:
+
+WITH dupl AS (SELECT order_ID, product_name, COUNT(*) AS occurences
+FROM `analog-mix-375109.superstore.store`
+GROUP BY 1, 2
+HAVING COUNT(*) > 1)
+SELECT *
+FROM `analog-mix-375109.superstore.store`
+WHERE order_ID IN (SELECT order_ID FROM dupl)
+
+This query returned two rows with the exact same information in each column apart from the sales amount and the quantity. Thus, it is confirmed that there are no duplicates.
+
+Next, after noticing that there were only 3 broad categories of products (furniture, office supplies, technology) I wanted to see the top 3 selling items in each category.
+The code is rather long, and perhaps there are more efficient ways to get the same result (please do let me know!!):
+## Top 3 selling items in each category
+
+WITH furniture AS (SELECT category, 
+sub_category, 
+product_name, 
+SUM(quantity) as amount_sold,
+DENSE_RANK()OVER(ORDER BY SUM(quantity) DESC) AS rank
+FROM `analog-mix-375109.superstore.store` 
+WHERE category = 'Furniture'
+GROUP BY 1,2,3
+ORDER BY amount_sold DESC
+LIMIT 3),
+
+office AS (SELECT category, 
+sub_category, 
+product_name, 
+SUM(quantity) as amount_sold,
+DENSE_RANK()OVER(ORDER BY SUM(quantity) DESC) AS rank
+FROM `analog-mix-375109.superstore.store` 
+WHERE category = 'Office Supplies'
+GROUP BY 1,2,3
+ORDER BY amount_sold DESC
+LIMIT 3),
+
+Technology AS (SELECT category, 
+sub_category, 
+product_name, 
+SUM(quantity) as amount_sold,
+DENSE_RANK()OVER(ORDER BY SUM(quantity) DESC) AS rank
+FROM `analog-mix-375109.superstore.store` 
+WHERE category = 'Technology'
+GROUP BY 1,2,3
+ORDER BY amount_sold DESC
+LIMIT 3)
+
+SELECT category, sub_category, product_name, SUM(quantity) AS amount_sold
+FROM `analog-mix-375109.superstore.store`
+WHERE Product_Name IN (SELECT product_name FROM furniture)
+OR Product_Name IN (SELECT product_name FROM office)
+OR product_name IN (SELECT product_name FROM technology)
+GROUP BY 1,2,3
+ORDER by 1
+
+I also thought it would be interesting to challenge myself and calculate a three - month moving average of total sales for each year
+with the following query:
+
+WITH quarter AS (SELECT EXTRACT(year FROM order_date) AS year,
+ EXTRACT(month FROM order_date) AS month,
+ ROUND(SUM(sales),2) AS total_sales
+FROM `analog-mix-375109.superstore.store`
+GROUP BY 1,2
+ORDER BY 1, 2)
+
+SELECT *, 
+ROUND (AVG(total_sales) OVER(PARTITION BY year ORDER BY year, month 
+ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), 2) AS three_month_avg
+FROM quarter
+ORDER by year, month
+
+Next, I looked at rising products. I define a rising product as one that sees a significant growth in sales over a pair of years. 
+Since this dataset includes data from 2014 to 2017, I did seperate queries for each pair of years within that timeframe.
+
+This query is for 2014/15, but for the other pairs (2015/16, 2016/17) I adjusted the WHERE clause accordingly:
+
+WITH psales AS (SELECT product_name, EXTRACT (year FROM order_date) AS year ,SUM(quantity) AS total_sold
+FROM `analog-mix-375109.superstore.store`
+WHERE EXTRACT(year FROM order_date) IN (2014, 2015)
+GROUP BY 1, 2
+ORDER BY 1, 2),
+
+comparison AS (SELECT *, LEAD(total_sold, 1) OVER (PARTITION BY product_name ORDER BY year) AS next
+FROM psales)
+
+SELECT *, ROUND((next-comparison.total_sold)/comparison.total_sold * 100, 2) AS pct_change
+FROM comparison
+ORDER BY pct_change DESC
+
+I also wanted to investigate the different segments of buyers in the dataset. I began by looking at which cities each segment are ordering from:
+
+SELECT segment,
+ state, 
+ city,
+ COUNT(DISTINCT order_id) AS count
+FROM `analog-mix-375109.superstore.store`
+GROUP BY 1,2,3
+ORDER BY 1,4 DESC
+
+Next, I wrote this query to look at the number of orders from each segment as well as the average spend per order:
+
+WITH seg_orders AS (SELECT segment, 
+EXTRACT(year from order_date) AS year,
+COUNT(DISTINCT order_ID) AS num_orders,
+SUM(sales) AS total_spend
+FROM `analog-mix-375109.superstore.store`
+GROUP BY 1, 2
+ORDER BY 2 DESC)
+
+SELECT main.segment, 
+year, 
+num_orders, 
+ROUND(total_spend/num_orders, 2) AS spend_per_order
+FROM `analog-mix-375109.superstore.store` AS main
+INNER JOIN seg_orders
+USING(segment)
+GROUP BY 1, 2, 3, 4
+ORDER BY 1, 2
+
+Finally, I looked at the most popular subcategories of products for each segment, along with their order totals:
+
+WITH segment_rank AS (SELECT *, DENSE_RANK()OVER(PARTITION BY segment ORDER BY total_ordered DESC) AS rank
+FROM
+(SELECT segment, category, Sub_Category, SUM(quantity) AS total_ordered
+FROM `analog-mix-375109.superstore.store`
+GROUP BY 1,2,3)
+ORDER BY segment, rank)
+
+SELECT segment, category, sub_category, total_ordered
+FROM segment_rank
+WHERE rank IN (1,2,3)
+ORDER BY 1
