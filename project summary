@@ -1,6 +1,11 @@
 In this project, I used SQL on Bigquery to analyse a SuperStore sales dataset from Kaggle (you can find the dataset at: https://www.kaggle.com/datasets/blurredmachine/superstore-time-series-dataset)
 My aim was to continue to apply the SQL techniques for data analysis that i have learned.
 
+I also visualised the results of these queries. 
+You can find the visualisation at: https://public.tableau.com/app/profile/daniel.mannah/viz/SuperstoreEDA_16749266399350/SuperstoreEDA
+
+***Note: in case it cause confusion, 'analog-mix-375109' is the name of the bigquery project space that I saved the dataset in.
+
 Firstly, I wanted to ensure that the dataset did not include duplictates that may skew the analysis. I used the following code to do so:
 
 WITH dupl AS (SELECT order_ID, product_name, COUNT(*) AS occurences
@@ -102,7 +107,7 @@ FROM `analog-mix-375109.superstore.store`
 GROUP BY 1,2,3
 ORDER BY 1,4 DESC
 
-Next, I wrote this query to look at the number of orders from each segment as well as the average spend per order:
+Next, I wrote this query to look at the number of orders from each segment as well as the average spend per order from each year:
 
 WITH seg_orders AS (SELECT segment, 
 EXTRACT(year from order_date) AS year,
@@ -122,16 +127,28 @@ USING(segment)
 GROUP BY 1, 2, 3, 4
 ORDER BY 1, 2
 
-Finally, I looked at the most popular subcategories of products for each segment, along with their order totals:
+Finally, I looked at the most popular subcategories of products for each segment in each year, along with their order totals:
 
-WITH segment_rank AS (SELECT *, DENSE_RANK()OVER(PARTITION BY segment ORDER BY total_ordered DESC) AS rank
+WITH segment_rank AS 
+(SELECT *, 
+DENSE_RANK()OVER(PARTITION BY segment, year ORDER BY total_ordered DESC) AS rank
 FROM
-(SELECT segment, category, Sub_Category, SUM(quantity) AS total_ordered
+
+(SELECT segment,
+ category,
+  Sub_Category,
+   EXTRACT(year FROM order_date) AS year,
+    SUM(quantity) AS total_ordered
 FROM `analog-mix-375109.superstore.store`
-GROUP BY 1,2,3)
+GROUP BY 1,2,3,4)
+
 ORDER BY segment, rank)
 
-SELECT segment, category, sub_category, total_ordered
+SELECT segment,
+ category,
+  sub_category,
+   year,
+    total_ordered
 FROM segment_rank
 WHERE rank IN (1,2,3)
-ORDER BY 1
+ORDER BY 1, 4
